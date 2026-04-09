@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrowdSense - Zone Boundaries Heat Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1600px; margin: 0 auto; }
+        .header { text-align: center; color: white; margin-bottom: 30px; }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { font-size: 1.1em; opacity: 0.9; }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease;
+        }
+        .stat-card:hover { transform: translateY(-5px); }
+        .stat-card h3 { color: #666; font-size: 0.9em; margin-bottom: 10px; }
+        .stat-value { font-size: 2em; font-weight: bold; color: #667eea; }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        .card h2 { margin-bottom: 15px; color: #333; font-size: 1.3em; }
+        .full-width { grid-column: span 2; }
+        #map { height: 600px; border-radius: 10px; z-index: 1; }
+        
+        .vital-display { text-align: center; padding: 20px; }
+        .vital-value { font-size: 3.5em; font-weight: bold; color: #667eea; }
+        .normal { color: #2ecc71; }
+        .high { color: #e74c3c; }
+        .low { color: #f39c12; }
+        
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background: #f8f9fa; font-weight: bold; }
+        
+        .alert-item {
+            background: #fff3f3;
+            border-left: 4px solid #ff4757;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+        }
+        .clear-btn {
+            background: #ff4757;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .clear-btn:hover { background: #ff3838; }
+        
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+            font-size: 12px;
+        }
+        .zone-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+        .zone-hot { background: #ff4757; color: white; }
+        .zone-warm { background: #ffa502; color: white; }
+        .zone-normal { background: #2ecc71; color: white; }
+        .zone-info { background: #3498db; color: white; }
+        
+        .zone-control {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .zone-btn {
+            padding: 5px 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .zone-btn.entrance { background: #3498db; color: white; }
+        .zone-btn.stage { background: #e74c3c; color: white; }
+        .zone-btn.food { background: #f39c12; color: white; }
+        .zone-btn.vip { background: #9b59b6; color: white; }
+        .zone-btn.rest { background: #2ecc71; color: white; }
+        
+        @media (max-width: 1024px) {
+            .dashboard { grid-template-columns: 1fr; }
+            .full-width { grid-column: span 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 CrowdSense Zone-Based Health Map</h1>
+            <p>Event zones with boundaries | Heat intensity shows health risk level per zone</p>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card"><h3>Current Heart Rate</h3><div class="stat-value" id="currentHR">-- BPM</div></div>
+            <div class="stat-card"><h3>Current SpO2</h3><div class="stat-value" id="currentSpO2">-- %</div></div>
+            <div class="stat-card"><h3>Average HR</h3><div class="stat-value" id="avgHR">-- BPM</div></div>
+            <div class="stat-card"><h3>Average SpO2</h3><div class="stat-value" id="avgSpO2">-- %</div></div>
+            <div class="stat-card"><h3>Active Users</h3><div class="stat-value" id="activeDevices">0</div></div>
+            <div class="stat-card"><h3>Active Alerts</h3><div class="stat-value" id="activeAlerts">0</div></div>
+        </div>
+        
+        <div class="card full-width">
+            <h2>🗺️ Event Zones & Health Heat Map</h2>
+            <div id="map"></div>
+            <div class="zone-control">
+                <button class="zone-btn entrance" onclick="focusZone('entrance')">📍 Focus Main Entrance</button>
+                <button class="zone-btn stage" onclick="focusZone('stage')">🎤 Focus Stage Area</button>
+                <button class="zone-btn food" onclick="focusZone('food')">🍔 Focus Food Court</button>
+                <button class="zone-btn vip" onclick="focusZone('vip')">✨ Focus VIP Zone</button>
+                <button class="zone-btn rest" onclick="focusZone('rest')">🛋️ Focus Rest Area</button>
+                <button class="zone-btn" onclick="resetView()">🗺️ Reset View</button>
+            </div>
+            <div style="margin-top: 10px; text-align: center;">
+                <span><span class="zone-badge zone-hot">🔴 High Risk (HR>120 or SpO2<85)</span></span>
+                <span style="margin-left: 10px;"><span class="zone-badge zone-warm">🟠 Medium Risk (HR>100 or SpO2<90)</span></span>
+                <span style="margin-left: 10px;"><span class="zone-badge zone-normal">🟢 Low Risk (Normal)</span></span>
+                <span style="margin-left: 10px;"><span class="zone-badge zone-info">🔵 Zone Boundaries</span></span>
+            </div>
+        </div>
+        
+        <div class="dashboard">
+            <div class="card">
+                <h2>💓 Live Heart Rate</h2>
+                <div class="vital-display">
+                    <div class="vital-value" id="liveHR">-- BPM</div>
+                    <div id="hrStatus" style="margin-top: 10px;"></div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>🫁 Live Blood Oxygen (SpO2)</h2>
+                <div class="vital-display">
+                    <div class="vital-value" id="liveSpO2">-- %</div>
+                    <div id="spo2Status" style="margin-top: 10px;"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="dashboard">
+            <div class="card">
+                <h2>🚨 Active Alerts</h2>
+                <div id="alertsList">No active alerts</div>
+                <button class="clear-btn" onclick="clearAlerts()">Clear All Alerts</button>
+            </div>
+            <div class="card">
+                <h2>📍 Users by Zone</h2>
+                <div id="userLocations" style="max-height: 300px; overflow-y: auto;"></div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>📋 Zone Health Summary</h2>
+            <div style="overflow-x: auto;">
+                <table id="zoneSummaryTable">
+                    <thead>
+                        <tr><th>Zone</th><th>Users</th><th>Avg HR</th><th>Avg SpO2</th><th>Risk Level</th><th>Status</th>\\
+                    </thead>
+                    <tbody id="zoneSummaryBody">
+                        <tr><td colspan="6">Waiting for data...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>📋 Recent Readings by Zone</h2>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead><tr><th>Time</th><th>User</th><th>Zone</th><th>HR</th><th>SpO2</th><th>Risk</th></tr></thead>
+                    <tbody id="readingsBody"></tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="refresh-status" id="refreshTime"></div>
+    </div>
+    
+    <script>
+        let map;
+        let heatLayer;
+        let markers = [];
+        let zoneLayers = [];
+        let userData = new Map();
+        
+        // Define zones with boundaries (polygon coordinates)
+        // These are sample boundaries around Bangalore - adjust for your actual event location
+        const zones = {
+            'ENTRANCE_A': {
+                name: 'Main Entrance',
+                color: '#3498db',
+                bounds: [
+                    [12.9695, 77.5925],
+                    [12.9705, 77.5925],
+                    [12.9705, 77.5935],
+                    [12.9695, 77.5935],
+                    [12.9695, 77.5925]
+                ],
+                center: [12.9700, 77.5930]
+            },
+            'ZONE_A': {
+                name: 'Stage Area',
+                color: '#e74c3c',
+                bounds: [
+                    [12.9715, 77.5940],
+                    [12.9725, 77.5940],
+                    [12.9725, 77.5950],
+                    [12.9715, 77.5950],
+                    [12.9715, 77.5940]
+                ],
+                center: [12.9720, 77.5945]
+            },
+            'ZONE_B': {
+                name: 'Food Court',
+                color: '#f39c12',
+                bounds: [
+                    [12.9705, 77.5950],
+                    [12.9715, 77.5950],
+                    [12.9715, 77.5960],
+                    [12.9705, 77.5960],
+                    [12.9705, 77.5950]
+                ],
+                center: [12.9710, 77.5955]
+            },
+            'ZONE_C': {
+                name: 'Rest Area',
+                color: '#2ecc71',
+                bounds: [
+                    [12.9700, 77.5935],
+                    [12.9710, 77.5935],
+                    [12.9710, 77.5945],
+                    [12.9700, 77.5945],
+                    [12.9700, 77.5935]
+                ],
+                center: [12.9705, 77.5940]
+            },
+            'VIP_ZONE': {
+                name: 'VIP Section',
+                color: '#9b59b6',
+                bounds: [
+                    [12.9725, 77.5950],
+                    [12.9735, 77.5950],
+                    [12.9735, 77.5960],
+                    [12.9725, 77.5960],
+                    [12.9725, 77.5950]
+                ],
+                center: [12.9730, 77.5955]
+            }
+        };
+        
+        function initMap() {
+            map = L.map('map').setView([12.9716, 77.5946], 16);
+            
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+                subdomains: 'abcd',
+                maxZoom: 19
+            }).addTo(map);
+            
+            // Draw zone boundaries
+            drawZoneBoundaries();
+            
+            // Initialize heat layer
+            heatLayer = L.heatLayer([], {
+                radius: 35,
+                blur: 20,
+                maxZoom: 18,
+                minOpacity: 0.4,
+                gradient: {
+                    0.2: 'blue',
+                    0.4: 'cyan',
+                    0.6: 'lime',
+                    0.8: 'yellow',
+                    1.0: 'red'
+                }
+            }).addTo(map);
+        }
+        
+        function drawZoneBoundaries() {
+            // Clear existing zone layers
+            zoneLayers.forEach(layer => map.removeLayer(layer));
+            zoneLayers = [];
+            
+            // Draw each zone polygon
+            for (const [zoneId, zone] of Object.entries(zones)) {
+                // Draw polygon boundary
+                const polygon = L.polygon(zone.bounds, {
+                    color: zone.color,
+                    weight: 3,
+                    fillColor: zone.color,
+                    fillOpacity: 0.15,
+                    dashArray: '5, 5'
+                }).addTo(map);
+                
+                polygon.bindPopup(`
+                    <b>${zone.name}</b><br>
+                    Zone ID: ${zoneId}<br>
+                    Click to see zone statistics
+                `);
+                
+                polygon.on('click', () => showZoneStats(zoneId));
+                
+                zoneLayers.push(polygon);
+                
+                // Add zone label
+                const label = L.marker(zone.center, {
+                    icon: L.divIcon({
+                        className: 'zone-label',
+                        html: `<div style="background: ${zone.color}; color: white; padding: 2px 8px; border-radius: 15px; font-size: 11px; font-weight: bold; white-space: nowrap;">${zone.name}</div>`,
+                        iconSize: [80, 20],
+                        iconAnchor: [40, 10]
+                    })
+                }).addTo(map);
+                
+                zoneLayers.push(label);
+            }
+        }
+        
+        function showZoneStats(zoneId) {
+            const zone = zones[zoneId];
+            const usersInZone = Array.from(userData.values()).filter(u => u.location === zoneId);
+            
+            if (usersInZone.length > 0) {
+                const avgHR = usersInZone.reduce((sum, u) => sum + u.heart_rate, 0) / usersInZone.length;
+                const avgSpO2 = usersInZone.reduce((sum, u) => sum + (u.spo2 || 0), 0) / usersInZone.length;
+                
+                alert(`${zone.name}\n\nUsers: ${usersInZone.length}\nAvg HR: ${avgHR.toFixed(0)} BPM\nAvg SpO2: ${avgSpO2.toFixed(0)}%\n\nClick on users for individual details`);
+            } else {
+                alert(`${zone.name}\n\nNo active users in this zone currently.`);
+            }
+        }
+        
+        function focusZone(zoneType) {
+            let zone;
+            switch(zoneType) {
+                case 'entrance': zone = zones['ENTRANCE_A']; break;
+                case 'stage': zone = zones['ZONE_A']; break;
+                case 'food': zone = zones['ZONE_B']; break;
+                case 'vip': zone = zones['VIP_ZONE']; break;
+                case 'rest': zone = zones['ZONE_C']; break;
+                default: return;
+            }
+            if (zone) {
+                map.flyTo(zone.center, 18, { duration: 1.5 });
+            }
+        }
+        
+        function resetView() {
+            map.flyTo([12.9716, 77.5946], 16, { duration: 1.5 });
+        }
+        
+        function calculateRiskScore(heartRate, spo2) {
+            let risk = 0;
+            if (heartRate > 120) risk += 0.8;
+            else if (heartRate > 100) risk += 0.4;
+            else if (heartRate < 50 && heartRate > 0) risk += 0.6;
+            
+            if (spo2 < 85 && spo2 > 0) risk += 1.0;
+            else if (spo2 < 90 && spo2 > 0) risk += 0.6;
+            else if (spo2 < 94 && spo2 > 0) risk += 0.3;
+            
+            return Math.min(risk, 1.0);
+        }
+        
+        function updateMapDisplay() {
+            const heatPoints = [];
+            const userByZone = {};
+            
+            // Initialize zone user counts
+            for (const [zoneId, zone] of Object.entries(zones)) {
+                userByZone[zoneId] = {
+                    users: [],
+                    heartRates: [],
+                    spo2s: []
+                };
+            }
+            
+            // Clear existing markers
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+            
+            // Process each user
+            for (const [userId, user] of userData.entries()) {
+                const zoneInfo = zones[user.location] || zones['ZONE_A'];
+                const coords = zoneInfo.center;
+                const riskScore = calculateRiskScore(user.heart_rate, user.spo2);
+                
+                // Add to heat map
+                heatPoints.push([coords[0], coords[1], riskScore]);
+                
+                // Track by zone
+                if (userByZone[user.location]) {
+                    userByZone[user.location].users.push(user);
+                    userByZone[user.location].heartRates.push(user.heart_rate);
+                    userByZone[user.location].spo2s.push(user.spo2);
+                }
+                
+                // Determine marker color
+                let markerColor, riskText;
+                if (riskScore > 0.6) {
+                    markerColor = '#ff4757';
+                    riskText = '🔴 HIGH RISK';
+                } else if (riskScore > 0.3) {
+                    markerColor = '#ffa502';
+                    riskText = '🟠 MEDIUM RISK';
+                } else {
+                    markerColor = '#2ecc71';
+                    riskText = '🟢 LOW RISK';
+                }
+                
+                // Create marker at zone center
+                const marker = L.circleMarker(coords, {
+                    radius: 12,
+                    fillColor: markerColor,
+                    color: 'white',
+                    weight: 3,
+                    opacity: 1,
+                    fillOpacity: 0.9
+                }).addTo(map);
+                
+                marker.bindPopup(`
+                    <div style="min-width: 200px;">
+                        <b>👤 ${userId}</b><br>
+                        📍 ${zoneInfo.name}<br>
+                        ❤️ Heart Rate: <b>${user.heart_rate}</b> BPM<br>
+                        🫁 SpO2: <b>${user.spo2}</b>%<br>
+                        ⚠️ ${riskText}<br>
+                        🕐 Last update: ${new Date(user.timestamp).toLocaleTimeString()}
+                    </div>
+                `);
+                
+                markers.push(marker);
+            }
+            
+            // Update heat layer
+            heatLayer.setLatLngs(heatPoints);
+            
+            // Update zone summary table
+            updateZoneSummary(userByZone);
+            
+            // Update user list by zone
+            updateUserList(userByZone);
+        }
+        
+        function updateZoneSummary(userByZone) {
+            let summaryHtml = '';
+            
+            for (const [zoneId, zone] of Object.entries(zones)) {
+                const zoneData = userByZone[zoneId];
+                const userCount = zoneData.users.length;
+                const avgHR = zoneData.heartRates.length > 0 ? 
+                    zoneData.heartRates.reduce((a, b) => a + b, 0) / zoneData.heartRates.length : 0;
+                const avgSpO2 = zoneData.spo2s.length > 0 ? 
+                    zoneData.spo2s.reduce((a, b) => a + b, 0) / zoneData.spo2s.length : 0;
+                
+                let riskLevel = 'No Data';
+                let riskClass = '';
+                if (userCount > 0) {
+                    if (avgHR > 120 || avgSpO2 < 85) {
+                        riskLevel = 'HIGH RISK';
+                        riskClass = 'zone-hot';
+                    } else if (avgHR > 100 || avgSpO2 < 90) {
+                        riskLevel = 'MEDIUM RISK';
+                        riskClass = 'zone-warm';
+                    } else {
+                        riskLevel = 'LOW RISK';
+                        riskClass = 'zone-normal';
+                    }
+                } else {
+                    riskLevel = 'Empty';
+                    riskClass = 'zone-info';
+                }
+                
+                summaryHtml += ` tr
+                    <td><span style="color: ${zone.color}; font-weight: bold;">●</span> ${zone.name}</td>
+                    <td>${userCount}</td>
+                    <td>${avgHR > 0 ? avgHR.toFixed(0) + ' BPM' : '--'}</td>
+                    <td>${avgSpO2 > 0 ? avgSpO2.toFixed(0) + '%' : '--'}</td>
+                    <td><span class="zone-badge ${riskClass}">${riskLevel}</span></td>
+                    <td>${userCount > 0 ? '🟢 Active' : '⚪ Vacant'}</td>
+                 </tr>`;
+            }
+            
+            document.getElementById('zoneSummaryBody').innerHTML = summaryHtml;
+        }
+        
+        function updateUserList(userByZone) {
+            let userListHtml = '';
+            
+            for (const [zoneId, zone] of Object.entries(zones)) {
+                const users = userByZone[zoneId].users;
+                if (users.length > 0) {
+                    userListHtml += `<div style="margin-bottom: 15px;">
+                        <div style="background: ${zone.color}; color: white; padding: 5px 10px; border-radius: 5px; margin-bottom: 8px;">
+                            <strong>${zone.name}</strong> (${users.length} users)
+                        </div>`;
+                    
+                    users.forEach(user => {
+                        const riskScore = calculateRiskScore(user.heart_rate, user.spo2);
+                        const riskText = riskScore > 0.6 ? '🔴 HIGH' : (riskScore > 0.3 ? '🟠 MEDIUM' : '🟢 LOW');
+                        userListHtml += `
+                            <div style="margin-bottom: 8px; padding: 8px; background: #f8f9fa; border-radius: 5px; border-left: 3px solid ${zone.color};">
+                                <strong>${user.user_id}</strong><br>
+                                ❤️ ${user.heart_rate} BPM | 🫁 ${user.spo2}%<br>
+                                ${riskText}
+                            </div>
+                        `;
+                    });
+                    
+                    userListHtml += `</div>`;
+                }
+            }
+            
+            if (userListHtml === '') {
+                userListHtml = '<p style="color: #999;">No active users. Waiting for ESP8266 data...</p>';
+            }
+            
+            document.getElementById('userLocations').innerHTML = userListHtml;
+        }
+        
+        // Fetch real data from ESP8266
+        async function fetchRealData() {
+            try {
+                const res = await fetch('/api/all');
+                const data = await res.json();
+                
+                if (data && data.length > 0) {
+                    // Update user data map with latest readings
+                    data.forEach(reading => {
+                        userData.set(reading.user_id, {
+                            heart_rate: reading.heart_rate,
+                            spo2: reading.spo2 || 0,
+                            location: reading.location,
+                            timestamp: reading.timestamp,
+                            user_id: reading.user_id
+                        });
+                    });
+                    
+                    // Remove old entries (older than 5 minutes)
+                    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+                    for (const [userId, user] of userData.entries()) {
+                        if (user.timestamp < fiveMinutesAgo) {
+                            userData.delete(userId);
+                        }
+                    }
+                    
+                    // Update map display
+                    updateMapDisplay();
+                    
+                    // Get latest reading for live display
+                    const latest = data[data.length - 1];
+                    document.getElementById('liveHR').innerHTML = latest.heart_rate + ' BPM';
+                    document.getElementById('currentHR').innerHTML = latest.heart_rate + ' BPM';
+                    document.getElementById('liveSpO2').innerHTML = (latest.spo2 || '--') + ' %';
+                    document.getElementById('currentSpO2').innerHTML = (latest.spo2 || '--') + ' %';
+                    
+                    // Update status
+                    let hrStatus = '';
+                    if (latest.heart_rate > 120) hrStatus = '<span class="high">⚠️ CRITICAL - Too High!</span>';
+                    else if (latest.heart_rate < 50) hrStatus = '<span class="low">⚠️ WARNING - Too Low!</span>';
+                    else hrStatus = '<span class="normal">✅ Normal</span>';
+                    document.getElementById('hrStatus').innerHTML = hrStatus;
+                    
+                    let spo2Status = '';
+                    if (latest.spo2 < 85 && latest.spo2 > 0) spo2Status = '<span class="high">⚠️ CRITICAL Low Oxygen!</span>';
+                    else if (latest.spo2 < 90 && latest.spo2 > 0) spo2Status = '<span class="low">⚠️ Low Oxygen!</span>';
+                    else if (latest.spo2 < 95 && latest.spo2 > 0) spo2Status = '<span class="low">⚠️ Below Normal</span>';
+                    else spo2Status = '<span class="normal">✅ Normal (95-100%)</span>';
+                    document.getElementById('spo2Status').innerHTML = spo2Status;
+                    
+                    // Update readings table
+                    let tableHtml = '';
+                    data.slice().reverse().slice(0, 20).forEach(reading => {
+                        const risk = calculateRiskScore(reading.heart_rate, reading.spo2);
+                        const riskText = risk > 0.6 ? '🔴 HIGH' : (risk > 0.3 ? '🟠 MEDIUM' : '🟢 LOW');
+                        const zoneName = zones[reading.location]?.name || reading.location;
+                        
+                        tableHtml += ` tr
+                            <td>${new Date(reading.timestamp).toLocaleTimeString()}</td>
+                            <td>${reading.user_id}</td>
+                            <td>${zoneName}</td>
+                            <td><strong>${reading.heart_rate}</strong> BPM</td>
+                            <td><strong>${reading.spo2 || '--'}</strong> %</td>
+                            <td>${riskText}</td>
+                         </tr>`;
+                    });
+                    document.getElementById('readingsBody').innerHTML = tableHtml || '<tr><td colspan="6">No readings yet</td></tr>';
+                }
+                
+                // Fetch stats
+                const statsRes = await fetch('/api/stats');
+                const stats = await statsRes.json();
+                if (stats.average_heart_rate) {
+                    document.getElementById('avgHR').innerHTML = stats.average_heart_rate + ' BPM';
+                    document.getElementById('avgSpO2').innerHTML = (stats.average_spo2 || '--') + ' %';
+                    document.getElementById('activeAlerts').innerHTML = stats.active_alerts || 0;
+                }
+                
+                // Fetch alerts
+                const alertsRes = await fetch('/api/alerts');
+                const alerts = await alertsRes.json();
+                if (alerts && alerts.length > 0) {
+                    let alertsHtml = '';
+                    alerts.slice().reverse().slice(0, 10).forEach(alert => {
+                        alertsHtml += `<div class="alert-item">
+                            <strong>${alert.severity === 'HIGH' ? '🚨' : '⚠️'} ${alert.message}</strong>
+                            <div class="alert-time">📍 ${alert.location} | ${new Date(alert.timestamp).toLocaleTimeString()}</div>
+                        </div>`;
+                    });
+                    document.getElementById('alertsList').innerHTML = alertsHtml;
+                } else {
+                    document.getElementById('alertsList').innerHTML = '✅ No active alerts';
+                }
+                
+                document.getElementById('activeDevices').innerHTML = userData.size;
+                document.getElementById('refreshTime').innerHTML = `Last updated: ${new Date().toLocaleTimeString()}`;
+                
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+        
+        function clearAlerts() {
+            fetch('/api/alerts', { method: 'DELETE' })
+                .then(() => fetchRealData());
+        }
+        
+        // Initialize map and start fetching data
+        initMap();
+        fetchRealData();
+        setInterval(fetchRealData, 3000);
+    </script>
+</body>
+</html>
